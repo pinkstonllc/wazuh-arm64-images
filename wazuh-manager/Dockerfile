@@ -19,6 +19,16 @@ ENV DEBIAN_FRONTEND=noninteractive
 COPY common/wazuh-apt.sh /
 COPY wazuh-manager/config/permanent_data.env wazuh-manager/config/permanent_data.sh /
 
+# The official start-up script (0-wazuh-init, set_correct_permOwner) moves
+# every file owned by group 101 / user 101 to 999, because the official image's
+# wazuh user and group are 999. Debian's package would otherwise create
+# wazuh as uid 100 / gid 101, and that migration would strip the wazuh
+# processes of access to their own files. Create them as 999 first; the
+# package keeps an existing wazuh user.
+RUN groupadd --system --gid 999 wazuh && \
+    useradd --system --uid 999 --gid 999 --home-dir /var/ossec \
+            --shell /usr/sbin/nologin --comment "Wazuh" wazuh
+
 RUN bash /wazuh-apt.sh && \
     apt-get install -y --no-install-recommends \
       xz-utils tar gzip openssl findutils procps lsb-release && \

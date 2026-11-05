@@ -75,5 +75,8 @@ jobs:
             wazuh-dashboard)
               docker run --rm --platform linux/arm64 --entrypoint /usr/share/wazuh-dashboard/node/bin/node "$img" --version ;;
             wazuh-manager)
-              docker run --rm --platform linux/arm64 --entrypoint /var/ossec/bin/wazuh-control "$img" info ;;
+              docker run --rm --platform linux/arm64 --entrypoint /var/ossec/bin/wazuh-control "$img" info
+              # The official start-up scripts assume wazuh is uid/gid 999.
+              docker run --rm --platform linux/arm64 --entrypoint id "$img" wazuh \
+                | tee /dev/stderr | grep -q 'uid=999(wazuh) gid=999(wazuh)' ;;
           esac
