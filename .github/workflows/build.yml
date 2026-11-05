@@ -1,0 +1,79 @@
+name: Build Wazuh arm64 images
+
+# Builds wazuh-indexer, wazuh-manager and wazuh-dashboard for linux/arm64 on
+# Debian 12 and pushes them to ghcr.io/<owner>/<component>:<version>.
+# Version pins live in versions.env; change WAZUH_VERSION there to upgrade.
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["README.md"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    # Public repos get free native arm64 runners; private repos build on x86
+    # under QEMU emulation (slower, same result).
+    runs-on: ${{ github.event.repository.private && 'ubuntu-latest' || 'ubuntu-24.04-arm' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [wazuh-indexer, wazuh-manager, wazuh-dashboard]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read versions
+        run: |
+          grep -E '^[A-Z0-9_]+=' versions.env >> "$GITHUB_ENV"
+          echo "OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+
+      - name: Set up QEMU (x86 runners only)
+        if: runner.arch != 'ARM64'
+        uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.component }}/Dockerfile
+          platforms: linux/arm64
+          push: true
+          build-args: |
+            WAZUH_VERSION=${{ env.WAZUH_VERSION }}
+            WAZUH_TAG_REVISION=${{ env.WAZUH_TAG_REVISION }}
+            FILEBEAT_TEMPLATE_BRANCH=${{ env.FILEBEAT_TEMPLATE_BRANCH }}
+            FILEBEAT_VERSION=${{ env.FILEBEAT_VERSION }}
+            FILEBEAT_REVISION=${{ env.FILEBEAT_REVISION }}
+            WAZUH_FILEBEAT_MODULE=${{ env.WAZUH_FILEBEAT_MODULE }}
+            S6_VERSION=${{ env.S6_VERSION }}
+          tags: |
+            ghcr.io/${{ env.OWNER }}/${{ matrix.component }}:${{ env.WAZUH_VERSION }}
+            ghcr.io/${{ env.OWNER }}/${{ matrix.component }}:${{ env.WAZUH_VERSION }}-debian12
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.description=Wazuh ${{ matrix.component }} ${{ env.WAZUH_VERSION }} on Debian 12 for arm64 (runs on Raspberry Pi 4)
+            org.opencontainers.image.licenses=GPL-2.0-only
+            org.opencontainers.image.version=${{ env.WAZUH_VERSION }}
+
+      - name: Smoke test (the image's main binary starts)
+        run: |
+          img="ghcr.io/${OWNER}/${{ matrix.component }}:${WAZUH_VERSION}"
+          case "${{ matrix.component }}" in
+            wazuh-indexer)
+              docker run --rm --platform linux/arm64 --entrypoint /usr/share/wazuh-indexer/jdk/bin/java "$img" -version ;;
+            wazuh-dashboard)
+              docker run --rm --platform linux/arm64 --entrypoint /usr/share/wazuh-dashboard/node/bin/node "$img" --version ;;
+            wazuh-manager)
+              docker run --rm --platform linux/arm64 --entrypoint /var/ossec/bin/wazuh-control "$img" info ;;
+          esac
