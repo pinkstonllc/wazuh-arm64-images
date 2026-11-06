@@ -21,7 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        component: [wazuh-indexer, wazuh-manager, wazuh-dashboard]
+        component: [wazuh-indexer, wazuh-manager, wazuh-dashboard, wireguard-tunnel]
     steps:
       - uses: actions/checkout@v4
 
@@ -29,6 +29,14 @@ jobs:
         run: |
           grep -E '^[A-Z0-9_]+=' versions.env >> "$GITHUB_ENV"
           echo "OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+          # Wazuh images are tagged with the Wazuh version, the tunnel sidecar
+          # with its own.
+          if [ "${{ matrix.component }}" = "wireguard-tunnel" ]; then
+            tag="$(grep '^TUNNEL_VERSION=' versions.env | cut -d= -f2)"
+          else
+            tag="$(grep '^WAZUH_VERSION=' versions.env | cut -d= -f2)"
+          fi
+          echo "TAG=$tag" >> "$GITHUB_ENV"
 
       - name: Set up QEMU (x86 runners only)
         if: runner.arch != 'ARM64'
@@ -58,22 +66,23 @@ jobs:
             WAZUH_FILEBEAT_MODULE=${{ env.WAZUH_FILEBEAT_MODULE }}
             S6_VERSION=${{ env.S6_VERSION }}
           tags: |
-            ghcr.io/${{ env.OWNER }}/${{ matrix.component }}:${{ env.WAZUH_VERSION }}
-            ghcr.io/${{ env.OWNER }}/${{ matrix.component }}:${{ env.WAZUH_VERSION }}-debian12
+            ghcr.io/${{ env.OWNER }}/${{ matrix.component }}:${{ env.TAG }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.description=Wazuh ${{ matrix.component }} ${{ env.WAZUH_VERSION }} on Debian 12 for arm64 (runs on Raspberry Pi 4)
+            org.opencontainers.image.description=${{ matrix.component }} ${{ env.TAG }} for arm64 (runs on Raspberry Pi 4)
             org.opencontainers.image.licenses=GPL-2.0-only
-            org.opencontainers.image.version=${{ env.WAZUH_VERSION }}
+            org.opencontainers.image.version=${{ env.TAG }}
 
       - name: Smoke test (the image's main binary starts)
         run: |
-          img="ghcr.io/${OWNER}/${{ matrix.component }}:${WAZUH_VERSION}"
+          img="ghcr.io/${OWNER}/${{ matrix.component }}:${TAG}"
           case "${{ matrix.component }}" in
             wazuh-indexer)
               docker run --rm --platform linux/arm64 --entrypoint /usr/share/wazuh-indexer/jdk/bin/java "$img" -version ;;
             wazuh-dashboard)
               docker run --rm --platform linux/arm64 --entrypoint /usr/share/wazuh-dashboard/node/bin/node "$img" --version ;;
+            wireguard-tunnel)
+              docker run --rm --platform linux/arm64 "$img" --version ;;
             wazuh-manager)
               docker run --rm --platform linux/arm64 --entrypoint /var/ossec/bin/wazuh-control "$img" info
               # The official start-up scripts assume wazuh is uid/gid 999.
