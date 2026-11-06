@@ -99,9 +99,19 @@ while true; do
   if ! ip link show "$IFACE" >/dev/null 2>&1; then
     log "interface gone; rebuilding"; until setup; do sleep 60 & wait $!; done; continue
   fi
-  if [[ -z "$hs" || "$hs" == "0" ]] || (( now - hs > 180 )); then
-    log "no handshake for $(( hs > 0 ? now - hs : -1 )) s; re-resolving ${ENDPOINT}"
+  if [[ "$hs" == "0" ]] || (( now - hs > 180 )); then
+    # Down: retry (re-resolving the name) every 30 s, but log only every
+    # 10 min so a long outage doesn't flood the log.
+    if (( now - last_report > 600 )); then
+      if [[ "$hs" == "0" ]]; then log "no handshake yet with ${ENDPOINT}; retrying every 30 s"
+      else log "tunnel down: last handshake $(( now - hs )) s ago; retrying ${ENDPOINT} every 30 s"; fi
+      last_report="$now"
+    fi
     wg set "$IFACE" peer "$PUB" endpoint "$ENDPOINT" 2>/dev/null || log "could not resolve ${ENDPOINT}"
+    was_down=1
+  elif (( ${was_down:-0} )); then
+    log "tunnel up: handshake with ${ENDPOINT} $(( now - hs )) s ago"
+    was_down=0; last_report="$now"
   elif (( now - last_report > 600 )); then
     rx="$(wg show "$IFACE" transfer | awk '{print $2}')"
     log "ok: last handshake $(( now - hs )) s ago, ${rx:-0} bytes received"
